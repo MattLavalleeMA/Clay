@@ -85,12 +85,36 @@ public class CompoundUnitTests
         AssertResult(Eval(expression), expected);
 
     [Theory]
+    [InlineData("v = 3\n2 V", "2 V")]
+    [InlineData("a = 3\n2 A * 3 V", "6 W")]
+    [InlineData("n = 4\n5 N * 2 m", "10 J")]
+    public void PhysicsSymbolsBeatCaseInsensitiveVariables(string document, string expected) =>
+        AssertResult(Eval(document, physics: true), expected);
+
+    [Theory]
+    [InlineData("5 m^0", "5")]
+    [InlineData("(5 m)^0", "1")]
+    [InlineData("5 in^2", "5 in²")]
+    [InlineData("5 inch^2", "5 in²")]
+    [InlineData("(2 inch)^2", "4 in²")]
+    [InlineData("4 in²", "4 in²")]
+    [InlineData("4 in² * 2 in", "8 in³")]
+    [InlineData("sqrt(1 ha)", "100 m")]
+    [InlineData("cbrt(8 l)", "0.2 m")]
+    [InlineData("sqrt(4 acre)", "127.229814 m")]
+    public void HandlesZeroPowersInchesAndLeafRoots(string expression, string expected) =>
+        AssertResult(Eval(expression), expected);
+
+    [Theory]
     [InlineData("20 °C * 2 m")]
     [InlineData("2 m / 20 °C")]
     [InlineData("(2 °C)^2")]
     [InlineData("sqrt(2 m)")]
+    [InlineData("sqrt(2 ha * 1 m)")]
     [InlineData("2 m + 3 s")]
     [InlineData("5 m/s in km")]
+    [InlineData("1 K/s in °C per s")]
+    [InlineData("1 m/s in m per °C")]
     public void RejectsInvalidUnitArithmetic(string expression) =>
         Assert.Equal(LineKind.Error, Eval(expression).Kind);
 

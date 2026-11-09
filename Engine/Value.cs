@@ -206,22 +206,37 @@ public static class Ops
     public static Value Root(Value v, int n, Func<double, double> root) =>
         Map(v, x => x.Unit == null ? new Value(root(x.Frac)) : UnitPow(x, 1.0 / n, root));
 
+    private static bool IsWhole(double p) => Math.Abs(p - Math.Round(p)) <= 1e-9;
+
     private static Value UnitPow(Value a, double e, Func<double, double> f)
     {
         var u = a.Unit!;
         if (u.Offset != 0) throw new EvalException($"Powers of {u.Symbol} aren't supported");
 
         var terms = new List<Term>();
+        double extra = 1;
         foreach (var t in u.Leaves)
         {
             double p = t.Power * e;
-            double whole = Math.Round(p);
-            if (Math.Abs(p - whole) > 1e-9) throw new EvalException($"Can't raise {u.Symbol} to that power");
-            terms.Add(t with { Power = (int)whole });
+            if (IsWhole(p))
+            {
+                terms.Add(t with { Power = (int)Math.Round(p) });
+                continue;
+            }
+
+            // ha, l and similar units root through their coherent base units: sqrt(1 ha) is 100 m
+            var coherent = UnitTable.Coherent(t.Unit) ?? throw new EvalException($"Can't raise {u.Symbol} to that power");
+            foreach (var c in coherent)
+            {
+                double cp = c.Power * p;
+                if (!IsWhole(cp)) throw new EvalException($"Can't raise {u.Symbol} to that power");
+                terms.Add(c with { Power = (int)Math.Round(cp) });
+            }
+            extra *= Math.Pow(t.Unit.Factor, p);
         }
 
         var unit = UnitTable.Compose(terms, out double scale);
-        double result = f(a.Number) * scale;
+        double result = f(a.Number) * scale * extra;
         if (double.IsNaN(result)) throw new EvalException("Not a number");
         return new Value(result, unit);
     }

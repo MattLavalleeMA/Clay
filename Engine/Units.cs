@@ -134,6 +134,9 @@ public static class UnitTable
         public void Dispose() => _physics = previous;
     }
 
+    /// <summary>True when physics units are on and the name is exactly an enabled physics symbol (V, A, N).</summary>
+    public static bool IsPhysicsSymbol(string name) => _physics && PhysicsExact.ContainsKey(name);
+
     public static Unit? Lookup(string name)
     {
         if (Exact.TryGetValue(name, out var u)) return u;
@@ -148,7 +151,7 @@ public static class UnitTable
     {
         var direct = Lookup(text);
         if (direct != null) return direct;
-        if (text.Length == 0) return null;
+        if (text.Length == 0 || text.Equals("in", StringComparison.OrdinalIgnoreCase)) return null;
 
         var terms = new List<Term>();
         var parts = text.Split('/');
@@ -165,10 +168,14 @@ public static class UnitTable
             out double scale) is { } result && scale == 1 ? result : null;
     }
 
+    // "in" isn't in the general lookup because it's also the conversion keyword
+    private static Unit? FactorUnit(string text) =>
+        Lookup(text) ?? (text.Equals("in", StringComparison.OrdinalIgnoreCase) ? Inch : null);
+
     private static bool TryFactor(string text, out Unit unit, out int power)
     {
         power = 1;
-        unit = Lookup(text)!;
+        unit = FactorUnit(text)!;
         if (unit != null) return true;
 
         int split = text.Length;
@@ -177,8 +184,20 @@ public static class UnitTable
 
         var digits = new StringBuilder();
         foreach (char c in text[split..]) digits.Append(c == '⁻' ? '-' : (char)('0' + Superscripts.IndexOf(c)));
-        unit = Lookup(text[..split])!;
+        unit = FactorUnit(text[..split])!;
         return unit != null && int.TryParse(digits.ToString(), out power) && power != 0;
+    }
+
+    /// <summary>A leaf unit as coherent base units: ha is m², l is m³. Null for currencies and offset units.</summary>
+    public static IReadOnlyList<Term>? Coherent(Unit leaf)
+    {
+        var d = leaf.Dimension;
+        if (d.C != 0 || leaf.Offset != 0) return null;
+
+        var terms = new List<Term>();
+        void Add(int power, string symbol) { if (power != 0) terms.Add(new Term(Get(symbol), power)); }
+        Add(d.L, "m"); Add(d.M, "kg"); Add(d.T, "s"); Add(d.K, "K"); Add(d.D, "B"); Add(d.A, "rad"); Add(d.I, "A");
+        return terms;
     }
 
     /// <summary>Raises a unit to an integer power; scale is non-1 only for named results.</summary>
@@ -190,7 +209,9 @@ public static class UnitTable
 
     /// <summary>Combines units without converting between them (for conversion targets such as mi per h).</summary>
     public static Unit? Divide(Unit a, Unit b) =>
-        Compose(a.Leaves.Concat(b.Leaves.Select(t => t with { Power = -t.Power })), out _);
+        a.Offset != 0 || b.Offset != 0
+            ? null
+            : Compose(a.Leaves.Concat(b.Leaves.Select(t => t with { Power = -t.Power })), out _);
 
     /// <summary>
     /// Turns leaf terms back into a unit: cancelled terms disappear, a lone leaf is returned as itself,

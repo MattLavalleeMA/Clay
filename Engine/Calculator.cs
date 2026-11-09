@@ -442,8 +442,15 @@ internal sealed class Parser
     {
         var k = At(n);
         if (k.Kind != Tk.Ident) return false;
-        return _sc.Vars.ContainsKey(k.Text) || Consts.ContainsKey(k.Text) || Specials.Contains(k.Text) ||
+        return IsVariable(k.Text) || Consts.ContainsKey(k.Text) || Specials.Contains(k.Text) ||
                (Functions.Table.ContainsKey(k.Text) && OpAt(At(n + 1), "("));
+    }
+
+    // Variables ignore case, but an exact physics symbol (V, A, N) beats a variable like v, a or n
+    private bool IsVariable(string name)
+    {
+        if (!_sc.Vars.ContainsKey(name)) return false;
+        return !UnitTable.IsPhysicsSymbol(name) || _sc.Vars.Keys.Contains(name, StringComparer.Ordinal);
     }
 
     public Value ParseAll()
@@ -507,11 +514,12 @@ internal sealed class Parser
     /// <summary>The rest of a conversion target: "in ft/s^2", "in miles per hour".</summary>
     private Unit TargetUnit(Unit unit)
     {
-        unit = UnitPower(unit, out _);
+        unit = UnitPower(unit, out _) ?? throw new ParseException("Unknown unit");
         while ((IsOp("/") || IsAnyWord("per")) && UnitAt(1) is { } divisor)
         {
             Next(); Next();
-            unit = UnitTable.Divide(unit, UnitPower(divisor, out _)) ?? throw new ParseException("Unknown unit");
+            var power = UnitPower(divisor, out _) ?? throw new ParseException("Unknown unit");
+            unit = UnitTable.Divide(unit, power) ?? throw new EvalException($"Can't combine {unit.Symbol} and {power.Symbol}");
         }
         return unit;
     }
@@ -524,19 +532,18 @@ internal sealed class Parser
         return UnitTable.Parse(k.Text);
     }
 
-    /// <summary>Applies a following integer power to a unit just read: 5 m^2 is 5 m².</summary>
-    private Unit UnitPower(Unit unit, out double scale)
+    /// <summary>Applies a following integer power to a unit just read: 5 m^2 is 5 m². Null when the power is 0.</summary>
+    private Unit? UnitPower(Unit unit, out double scale)
     {
         scale = 1;
         if (!IsOp("^")) return unit;
 
         bool negative = OpAt(At(1), "-");
         var power = At(negative ? 2 : 1);
-        if (power.Kind != Tk.Num || power.Num != Math.Floor(power.Num) || power.Num == 0) return unit;
+        if (power.Kind != Tk.Num || power.Num != Math.Floor(power.Num)) return unit;
 
         for (int i = negative ? 3 : 2; i > 0; i--) Next();
-        return UnitTable.Pow(unit, (int)(negative ? -power.Num : power.Num), out scale)
-            ?? throw new ParseException("Unknown unit");
+        return UnitTable.Pow(unit, (int)(negative ? -power.Num : power.Num), out scale);
     }
 
     /// <summary>The right operand of *, / or per; a bare unit means one of it (5 m / s, 60 miles per hour).</summary>
@@ -544,8 +551,8 @@ internal sealed class Parser
     {
         if (UnitAt(0) is not { } unit) return Unary();
         Next();
-        unit = UnitPower(unit, out double scale);
-        return new Value(scale, unit);
+        var powered = UnitPower(unit, out double scale);
+        return new Value(scale, powered);
     }
 
     private static Value PercentOf(Value part, Value whole)
@@ -657,7 +664,8 @@ internal sealed class Parser
                 if (IsAnyWord("in") && v.Unit == null && (At(1).Kind == Tk.End || (At(1).Kind == Tk.Op && At(1).Text != "(")))
                 {
                     Next();
-                    v = new Value(v.Number, UnitTable.Inch);
+                    var inch = UnitPower(UnitTable.Inch, out double inchScale);
+                    v = new Value(v.Number * inchScale, inch);
                     continue;
                 }
 
@@ -665,8 +673,8 @@ internal sealed class Parser
                 if (unit != null && v.Unit == null)
                 {
                     Next();
-                    unit = UnitPower(unit, out double unitScale);
-                    v = new Value(v.Number * unitScale, unit);
+                    var powered = UnitPower(unit, out double unitScale);
+                    v = new Value(v.Number * unitScale, powered);
                     continue;
                 }
                 break;
