@@ -196,7 +196,11 @@ public static class Ops
     private static Value PowScalar(Value a, Value b)
     {
         double e = b.Frac;
-        if (a.Unit != null && e != 1) return UnitPow(a, e, x => Math.Pow(x, e));
+        if (a.Unit != null && e != 1)
+        {
+            if (b.Unit != null) throw new EvalException("An exponent can't have a unit");
+            return UnitPow(a, e, x => Math.Pow(x, e));
+        }
         double result = Math.Pow(a.Frac, e);
         if (double.IsNaN(result)) throw new EvalException("Not a number");
         return new Value(result, a.Unit);
@@ -213,32 +217,47 @@ public static class Ops
         var u = a.Unit!;
         if (u.Offset != 0) throw new EvalException($"Powers of {u.Symbol} aren't supported");
 
-        var terms = new List<Term>();
+        List<Term> terms;
         double extra = 1;
-        foreach (var t in u.Leaves)
-        {
-            double p = t.Power * e;
-            if (IsWhole(p))
-            {
-                terms.Add(t with { Power = (int)Math.Round(p) });
-                continue;
-            }
-
-            // ha, l and similar units root through their coherent base units: sqrt(1 ha) is 100 m
-            var coherent = UnitTable.Coherent(t.Unit) ?? throw new EvalException($"Can't raise {u.Symbol} to that power");
-            foreach (var c in coherent)
-            {
-                double cp = c.Power * p;
-                if (!IsWhole(cp)) throw new EvalException($"Can't raise {u.Symbol} to that power");
-                terms.Add(c with { Power = (int)Math.Round(cp) });
-            }
-            extra *= Math.Pow(t.Unit.Factor, p);
-        }
+        if (u.Leaves.All(t => IsWhole(t.Power * e)))
+            terms = u.Leaves.Select(t => t with { Power = (int)Math.Round(t.Power * e) }).ToList();
+        else
+            terms = CoherentPow(u, e, out extra);
 
         var unit = UnitTable.Compose(terms, out double scale);
         double result = f(a.Number) * scale * extra;
         if (double.IsNaN(result)) throw new EvalException("Not a number");
         return new Value(result, unit);
+    }
+
+    /// <summary>
+    /// Raises a compound to a power through coherent base units, so exponents that cancel across leaves
+    /// work: sqrt(1 ha) is 100 m, and sqrt(100 J/kg) is 10 m/s. <paramref name="factor"/> is the conversion.
+    /// </summary>
+    private static List<Term> CoherentPow(Unit u, double e, out double factor)
+    {
+        var exponents = new List<(Unit Unit, double Power)>();
+        factor = 1;
+        foreach (var t in u.Leaves)
+        {
+            double p = t.Power * e;
+            if (UnitTable.Coherent(t.Unit) is not { } coherent)
+            {
+                exponents.Add((t.Unit, p));
+                continue;
+            }
+            foreach (var c in coherent) exponents.Add((c.Unit, c.Power * p));
+            factor *= Math.Pow(t.Unit.Factor, p);
+        }
+
+        var terms = new List<Term>();
+        foreach (var group in exponents.GroupBy(x => x.Unit))
+        {
+            double p = group.Sum(x => x.Power);
+            if (!IsWhole(p)) throw new EvalException($"Can't raise {u.Symbol} to that power");
+            if (Math.Round(p) != 0) terms.Add(new Term(group.Key, (int)Math.Round(p)));
+        }
+        return terms;
     }
 
     private static Value FactorialScalar(Value v)

@@ -495,7 +495,7 @@ internal sealed class Parser
             var word = Cur.Text.ToLowerInvariant();
             if (word is "hex" or "bin" or "oct") { Next(); return Ops.Map(left, x => ToBase(x, word)); }
             if (word is "dec" or "decimal") { Next(); return Ops.Map(left, x => new Value(x.Frac, x.Unit)); }
-            if (word == "in") { Next(); return Ops.ConvertTo(left, UnitTable.Inch); }
+            if (word == "in") { Next(); return Ops.ConvertTo(left, TargetUnit(UnitTable.Inch)); }
         }
 
         if (Cur.Kind is Tk.Ident or Tk.Sym)
@@ -524,11 +524,13 @@ internal sealed class Parser
         return unit;
     }
 
-    /// <summary>A unit word at offset n that isn't a variable, keyword, or function call.</summary>
+    /// <summary>A unit word at offset n that isn't a variable, keyword, or function call; "in" means inches.</summary>
     private Unit? UnitAt(int n)
     {
         var k = At(n);
-        if (k.Kind != Tk.Ident || Keywords.Contains(k.Text) || IsValueIdent(n) || OpAt(At(n + 1), "(")) return null;
+        if (k.Kind != Tk.Ident || OpAt(At(n + 1), "(")) return null;
+        if (k.Text.Equals("in", StringComparison.OrdinalIgnoreCase)) return UnitTable.Inch;
+        if (Keywords.Contains(k.Text) || IsValueIdent(n)) return null;
         return UnitTable.Parse(k.Text);
     }
 

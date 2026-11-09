@@ -102,6 +102,10 @@ public class CompoundUnitTests
     [InlineData("sqrt(1 ha)", "100 m")]
     [InlineData("cbrt(8 l)", "0.2 m")]
     [InlineData("sqrt(4 acre)", "127.229814 m")]
+    [InlineData("sqrt(100 J / 1 kg)", "10 m/s")]
+    [InlineData("1 m² in in^2", "1,550.0031 in²")]
+    [InlineData("1 m/s in in per s", "39.370079 in/s")]
+    [InlineData("5 m / in", "196.850394")]
     public void HandlesZeroPowersInchesAndLeafRoots(string expression, string expected) =>
         AssertResult(Eval(expression), expected);
 
@@ -115,6 +119,7 @@ public class CompoundUnitTests
     [InlineData("5 m/s in km")]
     [InlineData("1 K/s in °C per s")]
     [InlineData("1 m/s in m per °C")]
+    [InlineData("(3 m)^(2 s)")]
     public void RejectsInvalidUnitArithmetic(string expression) =>
         Assert.Equal(LineKind.Error, Eval(expression).Kind);
 
