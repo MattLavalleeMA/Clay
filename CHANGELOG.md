@@ -4,6 +4,12 @@ All notable changes to Clay are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Unit arithmetic: multiplying, dividing, and raising values combines and cancels units (`5 m/s * 4 s` is `20 m`), using the left unit when units are mixed.
+- Compound unit input and conversion targets such as `m/s^2`, `kg·m/s²`, and `miles per hour`.
+- Optional physics units (N, Hz, A, V, Ω) in Settings.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added

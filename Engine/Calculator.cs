@@ -18,6 +18,8 @@ public sealed class Calculator
     public bool GroupDigits { get; set; } = true;
     public AngleMode AngleMode { get; set; } = AngleMode.Radians;
 
+    /// <summary>Enables N, Hz, A, V, Ω and related units, and names results with them.</summary>
+    public bool PhysicsUnits { get; set; }
     private static readonly Regex Newline = new("\r\n|\r|\n", RegexOptions.Compiled);
     private static readonly Regex LabelRx = new(@"^\p{L}[^:=]*:\s*(?<rest>\S.*)$", RegexOptions.Compiled);
     private static readonly Regex AssignRx =
@@ -41,6 +43,7 @@ public sealed class Calculator
 
     public List<LineResult> Evaluate(string text)
     {
+        using var physics = UnitTable.UsePhysics(PhysicsUnits);
         var scope = new Scope(AngleMode);
         var results = new List<LineResult>();
         foreach (var line in Newline.Split(text))
@@ -93,7 +96,7 @@ public sealed class Calculator
         {
             if (name != null && (Parser.Keywords.Contains(name) || Parser.Targets.Contains(name) ||
                 Parser.Specials.Contains(name) || Parser.IsConst(name) || Parser.Scale(name) != null ||
-                Functions.Table.ContainsKey(name) || UnitTable.Lookup(name) != null || Lexer.Shortcuts.ContainsKey(name)))
+                Functions.Table.ContainsKey(name) || UnitTable.Parse(name) != null || Lexer.Shortcuts.ContainsKey(name)))
                 throw new EvalException($"'{name}' is a reserved name");
 
             var value = Run(t, scope, out bool aggregate);
@@ -167,7 +170,7 @@ public sealed class Calculator
     private static bool Known(string w, Scope scope, bool isCall) =>
         Parser.Keywords.Contains(w) || Parser.Targets.Contains(w) || Parser.Specials.Contains(w) ||
         Parser.IsConst(w) || Parser.Scale(w) != null || (isCall && Functions.Table.ContainsKey(w)) ||
-        scope.Vars.ContainsKey(w) || UnitTable.Lookup(w) != null;
+        scope.Vars.ContainsKey(w) || UnitTable.Parse(w) != null;
 
     private static bool Dangling(Token k, bool atStart) => k.Kind switch
     {
@@ -192,8 +195,8 @@ internal static class Functions
     public static readonly Dictionary<string, Func<List<Value>, Value>> Table =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            ["sqrt"] = a => Map(a, x => Math.Sqrt(x)),
-            ["cbrt"] = a => Map(a, x => Math.Cbrt(x)),
+            ["sqrt"] = a => a.Count > 0 && a[0].Unit != null ? Ops.Root(a[0], 2, Math.Sqrt) : Map(a, x => Math.Sqrt(x)),
+            ["cbrt"] = a => a.Count > 0 && a[0].Unit != null ? Ops.Root(a[0], 3, Math.Cbrt) : Map(a, x => Math.Cbrt(x)),
             ["abs"] = a => Map(a, x => Math.Abs(x), keepUnit: true),
             ["ceil"] = a => Map(a, x => Math.Ceiling(x), keepUnit: true),
             ["floor"] = a => Map(a, x => Math.Floor(x), keepUnit: true),
@@ -329,7 +332,7 @@ internal static class Functions
     }
 
     private static double ToRadians(Value v, AngleMode angleMode) =>
-        v.Unit is { Dimension: Dim.Angle } u
+        v.Unit is { } u && u.Dimension == Dim.Angle
             ? Unit.Convert(v.Number, u, UnitTable.Radian)
             : angleMode == AngleMode.Degrees ? v.Frac * Math.PI / 180 : v.Frac;
 
@@ -384,7 +387,7 @@ internal static class Functions
 internal sealed class Parser
 {
     public static readonly HashSet<string> Keywords = new(StringComparer.OrdinalIgnoreCase)
-        { "in", "to", "as", "into", "of", "on", "off", "mod", "percent" };
+        { "in", "to", "as", "into", "of", "on", "off", "mod", "percent", "per" };
 
     public static readonly HashSet<string> Targets = new(StringComparer.OrdinalIgnoreCase)
         { "hex", "bin", "oct", "dec", "decimal" };
@@ -490,15 +493,59 @@ internal sealed class Parser
 
         if (Cur.Kind is Tk.Ident or Tk.Sym)
         {
-            var unit = UnitTable.Lookup(Cur.Text);
+            var unit = Cur.Kind == Tk.Sym ? UnitTable.Lookup(Cur.Text) : UnitTable.Parse(Cur.Text);
             if (unit != null)
             {
                 Next();
-                return Ops.ConvertTo(left, unit);
+                return Ops.ConvertTo(left, TargetUnit(unit));
             }
         }
 
         throw new ParseException("Unknown unit");
+    }
+
+    /// <summary>The rest of a conversion target: "in ft/s^2", "in miles per hour".</summary>
+    private Unit TargetUnit(Unit unit)
+    {
+        unit = UnitPower(unit, out _);
+        while ((IsOp("/") || IsAnyWord("per")) && UnitAt(1) is { } divisor)
+        {
+            Next(); Next();
+            unit = UnitTable.Divide(unit, UnitPower(divisor, out _)) ?? throw new ParseException("Unknown unit");
+        }
+        return unit;
+    }
+
+    /// <summary>A unit word at offset n that isn't a variable, keyword, or function call.</summary>
+    private Unit? UnitAt(int n)
+    {
+        var k = At(n);
+        if (k.Kind != Tk.Ident || Keywords.Contains(k.Text) || IsValueIdent(n) || OpAt(At(n + 1), "(")) return null;
+        return UnitTable.Parse(k.Text);
+    }
+
+    /// <summary>Applies a following integer power to a unit just read: 5 m^2 is 5 m².</summary>
+    private Unit UnitPower(Unit unit, out double scale)
+    {
+        scale = 1;
+        if (!IsOp("^")) return unit;
+
+        bool negative = OpAt(At(1), "-");
+        var power = At(negative ? 2 : 1);
+        if (power.Kind != Tk.Num || power.Num != Math.Floor(power.Num) || power.Num == 0) return unit;
+
+        for (int i = negative ? 3 : 2; i > 0; i--) Next();
+        return UnitTable.Pow(unit, (int)(negative ? -power.Num : power.Num), out scale)
+            ?? throw new ParseException("Unknown unit");
+    }
+
+    /// <summary>The right operand of *, / or per; a bare unit means one of it (5 m / s, 60 miles per hour).</summary>
+    private Value Operand()
+    {
+        if (UnitAt(0) is not { } unit) return Unary();
+        Next();
+        unit = UnitPower(unit, out double scale);
+        return new Value(scale, unit);
     }
 
     private static Value PercentOf(Value part, Value whole)
@@ -540,8 +587,8 @@ internal sealed class Parser
         var v = Unary();
         while (true)
         {
-            if (IsOp("*")) { Next(); v = Ops.Mul(v, Unary()); }
-            else if (IsOp("/")) { Next(); v = Ops.Div(v, Unary()); }
+            if (IsOp("*")) { Next(); v = Ops.Mul(v, Operand()); }
+            else if (IsOp("/") || IsAnyWord("per")) { Next(); v = Ops.Div(v, Operand()); }
             else if (IsAnyWord("mod") || IsOp("%")) { Next(); v = Ops.Mod(v, Unary()); }
             else if (IsAnyWord("of")) { Next(); v = Ops.Mul(v, Unary()); }              // 20% of 150
             else if (IsAnyWord("on")) { Next(); v = Ops.Add(Unary(), AsPercent(v), 1); }  // 20% on 100
@@ -614,11 +661,12 @@ internal sealed class Parser
                     continue;
                 }
 
-                var unit = Keywords.Contains(Cur.Text) || OpAt(At(1), "(") ? null : UnitTable.Lookup(Cur.Text);
+                var unit = Keywords.Contains(Cur.Text) || OpAt(At(1), "(") ? null : UnitTable.Parse(Cur.Text);
                 if (unit != null && v.Unit == null)
                 {
                     Next();
-                    v = new Value(v.Number, unit);
+                    unit = UnitPower(unit, out double unitScale);
+                    v = new Value(v.Number * unitScale, unit);
                     continue;
                 }
                 break;

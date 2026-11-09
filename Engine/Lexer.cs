@@ -51,6 +51,11 @@ public static class Lexer
                 list.Add(new Token(Tk.Op, c.ToString()));
                 i++;
             }
+            else if (c == '·')
+            {
+                list.Add(new Token(Tk.Op, "*"));
+                i++;
+            }
             else
             {
                 throw new ParseException($"Unexpected '{c}'");
@@ -88,7 +93,9 @@ public static class Lexer
 
     private static bool IsDigit(char c) => c is >= '0' and <= '9';
     private static bool IsIdentStart(char c) => char.IsLetter(c) || c == '_' || c == '°';
-    private static bool IsIdentPart(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '²' || c == '³' || c == '°';
+    private static bool IsIdentPart(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '°' || Superscripts.IndexOf(c) >= 0;
+
+    private const string Superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹⁻";
 
 
 
@@ -148,19 +155,36 @@ public static class Lexer
         while (i < s.Length && IsIdentPart(s[i])) i++;
         var word = s[start..i];
 
-        // Compound units such as km/h, m/s, mi/h
-        if (i + 1 < s.Length && s[i] == '/' && char.IsLetter(s[i + 1]))
+        // Unit expressions such as km/h, m/s², kg·m/s², and m/s^2 (a power binds to the unit before it)
+        int end = i;
+        var expr = word + ReadPower(s, ref end);
+        while (end + 1 < s.Length && (s[end] == '/' || s[end] == '·') && IsIdentStart(s[end + 1]))
         {
-            int j = i + 1;
+            int j = end + 1;
             while (j < s.Length && IsIdentPart(s[j])) j++;
-            var compound = s[start..j];
-            if (UnitTable.Lookup(compound) != null)
-            {
-                word = compound;
-                i = j;
-            }
+            var compound = expr + s[end] + s[(end + 1)..j];
+            compound += ReadPower(s, ref j);
+            if (UnitTable.Parse(compound) == null) break;
+            word = expr = compound;
+            i = end = j;
         }
 
         return new Token(Tk.Ident, word);
+    }
+
+    /// <summary>Reads "^2" or "^-1" at i as superscripts; returns "" and leaves i alone otherwise.</summary>
+    private static string ReadPower(string s, ref int i)
+    {
+        if (i >= s.Length || s[i] != '^') return "";
+        int j = i + 1;
+        bool negative = j < s.Length && s[j] == '-';
+        if (negative) j++;
+        int digits = j;
+        while (j < s.Length && IsDigit(s[j])) j++;
+        if (j == digits) return "";
+
+        var sup = (negative ? "⁻" : "") + string.Concat(s[digits..j].Select(c => Superscripts[c - '0']));
+        i = j;
+        return sup;
     }
 }

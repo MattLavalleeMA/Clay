@@ -353,6 +353,13 @@ public sealed partial class MainWindow : Window
         SaveSettings();
     }
 
+    private void OnPhysicsUnits(object sender, RoutedEventArgs e)
+    {
+        _calc.PhysicsUnits = PhysicsToggle.IsChecked;
+        Recalculate();
+        SaveSettings();
+    }
+
     private void OnTheme(object sender, RoutedEventArgs e)
     {
         if (sender is RadioMenuFlyoutItem { Tag: string tag })
@@ -461,6 +468,7 @@ public sealed partial class MainWindow : Window
             _calc.Decimals = settings.Decimals;
             _calc.AngleMode = Enum.Parse<AngleMode>(settings.AngleMode);
             _calc.GroupDigits = settings.GroupDigits;
+            _calc.PhysicsUnits = settings.PhysicsUnits;
             Decimals2.IsChecked = settings.Decimals == 2;
             Decimals4.IsChecked = settings.Decimals == 4;
             Decimals6.IsChecked = settings.Decimals == 6;
@@ -468,6 +476,7 @@ public sealed partial class MainWindow : Window
             RadiansOption.IsChecked = _calc.AngleMode == AngleMode.Radians;
             DegreesOption.IsChecked = _calc.AngleMode == AngleMode.Degrees;
             GroupToggle.IsChecked = settings.GroupDigits;
+            PhysicsToggle.IsChecked = settings.PhysicsUnits;
             DefaultTheme.IsChecked = settings.Theme == "Default";
             LightTheme.IsChecked = settings.Theme == "Light";
             DarkTheme.IsChecked = settings.Theme == "Dark";
@@ -485,7 +494,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var settings = new Settings(_calc.Decimals, _calc.AngleMode.ToString(), _calc.GroupDigits, _theme);
+            var settings = new Settings(_calc.Decimals, _calc.AngleMode.ToString(), _calc.GroupDigits, _theme, _calc.PhysicsUnits);
             AtomicFile.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

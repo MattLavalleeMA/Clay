@@ -73,7 +73,7 @@ public static class Ops
     public static double In(Value v, Unit target)
     {
         if (v.Unit == null) return v.Frac;
-        if (ReferenceEquals(v.Unit, target)) return v.Number;
+        if (v.Unit.SameAs(target)) return v.Number;
         if (v.Unit.Dimension != target.Dimension)
             throw new EvalException($"Can't mix {v.Unit.Symbol} and {target.Symbol}");
         return Unit.Convert(v.Number, v.Unit, target);
@@ -107,21 +107,82 @@ public static class Ops
 
     private static Value MulScalar(Value a, Value b)
     {
-        if (a.Unit != null && b.Unit != null) throw new EvalException("Can't multiply two units");
+        if (a.Unit != null && b.Unit != null) return Combine(a, b, 1);
         return new Value(a.Frac * b.Frac, a.Unit ?? b.Unit);
     }
 
     private static Value DivScalar(Value a, Value b)
     {
         if (b.Frac == 0) throw new EvalException("Division by zero");
-        if (a.Unit != null && b.Unit != null)
-        {
-            if (a.Unit.Dimension != b.Unit.Dimension)
-                throw new EvalException($"Can't divide {a.Unit.Symbol} by {b.Unit.Symbol}");
+        if (a.Unit != null && b.Unit != null && a.Unit.Dimension == b.Unit.Dimension)
             return new Value(a.Number / In(b, a.Unit));
-        }
-        if (b.Unit != null) throw new EvalException("Can't divide by a unit");
+        if (b.Unit != null) return Combine(a, b, -1);
         return new Value(a.Frac / b.Frac, a.Unit);
+    }
+
+    /// <summary>Multiplies (sign 1) or divides (sign -1) values whose units combine, e.g. m/s × s = m.</summary>
+    private static Value Combine(Value a, Value b, int sign)
+    {
+        var right = b.Unit!;
+        if (a.Unit is { Offset: not 0 } || right.Offset != 0)
+        {
+            var verb = sign > 0 ? "multiply" : "divide";
+            throw new EvalException(a.Unit == null
+                ? $"Can't {verb} by {right.Symbol}"
+                : $"Can't {verb} {a.Unit.Symbol} by {right.Symbol}");
+        }
+
+        var terms = a.Unit?.Leaves.ToList() ?? [];
+        double scale = 1;
+        foreach (var t in right.Leaves) scale *= Absorb(terms, t.Unit, t.Power * sign);
+
+        var unit = UnitTable.Compose(terms, out double named);
+        double n = sign > 0 ? a.Frac * b.Number : a.Frac / b.Number;
+        return new Value(n * scale * named, unit);
+    }
+
+    private static readonly int[] Powers = [1, -1, 2, -2, 3, -3];
+
+    /// <summary>
+    /// Adds u^p to the terms. A term of a related dimension takes it in its own unit so the two cancel
+    /// (the left unit wins): s joins h, s joins Hz as h⁻¹, ha joins m as m². Returns the numeric scale.
+    /// Across different powers (volume and length) this only happens when the power grows or cancels,
+    /// so rates such as l/km and km/l stay as written.
+    /// </summary>
+    private static double Absorb(List<Term> terms, Unit u, int p)
+    {
+        int same = terms.FindIndex(t => ReferenceEquals(t.Unit, u));
+        if (same >= 0)
+        {
+            terms[same] = terms[same] with { Power = terms[same].Power + p };
+            return 1;
+        }
+
+        static bool Joins(int k, int existing, int added) =>
+            Math.Abs(k) == 1 || existing + added == 0 || Math.Sign(existing) == Math.Sign(added);
+
+        // u is a power of an existing term: express u^p as t^(k·p)
+        foreach (int k in Powers)
+        {
+            int i = terms.FindIndex(t => t.Unit.Dimension.Pow(k) == u.Dimension && Joins(k, t.Power, k * p));
+            if (i < 0) continue;
+            var t = terms[i].Unit;
+            terms[i] = terms[i] with { Power = terms[i].Power + k * p };
+            return Math.Pow(u.Factor / Math.Pow(t.Factor, k), p);
+        }
+
+        // An existing term is a power of u (ha against m): rewrite that term in u
+        foreach (int k in Powers.Skip(2))
+        {
+            int i = terms.FindIndex(t => u.Dimension.Pow(k) == t.Unit.Dimension && Joins(k, k * t.Power, p));
+            if (i < 0) continue;
+            var t = terms[i];
+            terms[i] = new Term(u, k * t.Power + p);
+            return Math.Pow(t.Unit.Factor / Math.Pow(u.Factor, k), t.Power);
+        }
+
+        terms.Add(new Term(u, p));
+        return 1;
     }
 
     private static Value ModScalar(Value a, Value b)
@@ -135,10 +196,34 @@ public static class Ops
     private static Value PowScalar(Value a, Value b)
     {
         double e = b.Frac;
-        if (a.Unit != null && e != 1) throw new EvalException("Powers of units aren't supported");
+        if (a.Unit != null && e != 1) return UnitPow(a, e, x => Math.Pow(x, e));
         double result = Math.Pow(a.Frac, e);
         if (double.IsNaN(result)) throw new EvalException("Not a number");
         return new Value(result, a.Unit);
+    }
+
+    /// <summary>The nth root of a value with a unit: sqrt(9 m²) is 3 m.</summary>
+    public static Value Root(Value v, int n, Func<double, double> root) =>
+        Map(v, x => x.Unit == null ? new Value(root(x.Frac)) : UnitPow(x, 1.0 / n, root));
+
+    private static Value UnitPow(Value a, double e, Func<double, double> f)
+    {
+        var u = a.Unit!;
+        if (u.Offset != 0) throw new EvalException($"Powers of {u.Symbol} aren't supported");
+
+        var terms = new List<Term>();
+        foreach (var t in u.Leaves)
+        {
+            double p = t.Power * e;
+            double whole = Math.Round(p);
+            if (Math.Abs(p - whole) > 1e-9) throw new EvalException($"Can't raise {u.Symbol} to that power");
+            terms.Add(t with { Power = (int)whole });
+        }
+
+        var unit = UnitTable.Compose(terms, out double scale);
+        double result = f(a.Number) * scale;
+        if (double.IsNaN(result)) throw new EvalException("Not a number");
+        return new Value(result, unit);
     }
 
     private static Value FactorialScalar(Value v)
@@ -176,6 +261,16 @@ public static class Formatter
         }
 
         string n = Number(v.Number, decimals, group);
+
+        // Currency rates such as $15/h keep the currency's prefix
+        var money = u.Leaves.Where(t => t.Unit.IsCurrency).ToList();
+        if (!u.IsLeaf && money is [{ Power: 1, Unit.Prefix: { } prefix } m] && u.Symbol.StartsWith(m.Unit.Symbol, StringComparison.Ordinal))
+        {
+            string body = Number(Math.Abs(v.Number), decimals, group);
+            string sign = v.Number < 0 && body != "0" ? "-" : "";
+            return sign + prefix + body + u.Symbol[m.Unit.Symbol.Length..];
+        }
+
         return u.Symbol == "°" ? n + "°" : n + " " + u.Symbol;
     }
 
