@@ -10,6 +10,10 @@ All notable changes to Clay are documented here.
 - Compound unit input and conversion targets such as `m/s^2`, `kg·m/s²`, and `miles per hour`.
 - Optional physics units (N, Hz, A, V, Ω) in Settings.
 
+### Fixed
+
+- Sticky note theme now colors the title bar dark orange-brown and keeps the minimize, maximize, and close buttons visible.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added

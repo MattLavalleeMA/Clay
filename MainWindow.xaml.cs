@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -62,6 +63,8 @@ public sealed partial class MainWindow : Window
     private double _lineHeight = 24;
     private readonly Brush _stickyTextBrush = new SolidColorBrush(Color.FromArgb(255, 55, 48, 20));
     private readonly Brush _stickyResultBrush = new SolidColorBrush(Color.FromArgb(255, 117, 83, 0));
+    private readonly Brush _stickyTitleBrush = new SolidColorBrush(Color.FromArgb(255, 139, 74, 18));
+    private readonly Brush _stickyTitleTextBrush = new SolidColorBrush(Color.FromArgb(255, 255, 249, 183));
     private bool _stickyTheme;
 
     public MainWindow()
@@ -378,6 +381,49 @@ public sealed partial class MainWindow : Window
         StickyBackground.Visibility = _stickyTheme ? Visibility.Visible : Visibility.Collapsed;
         if (_stickyTheme) Editor.Foreground = _stickyTextBrush;
         else Editor.ClearValue(TextBox.ForegroundProperty);
+        ApplyTitleBarTheme();
+    }
+
+    // The caption buttons are drawn by Windows, so their colors must be set explicitly to stay visible
+    private void ApplyTitleBarTheme()
+    {
+        if (_stickyTheme)
+        {
+            AppTitleBar.Background = _stickyTitleBrush;
+            TitleText.Foreground = _stickyTitleTextBrush;
+        }
+        else
+        {
+            AppTitleBar.ClearValue(Panel.BackgroundProperty);
+            TitleText.ClearValue(TextBlock.ForegroundProperty);
+        }
+
+        if (!AppWindowTitleBar.IsCustomizationSupported()) return;
+
+        var bar = AppWindow.TitleBar;
+        if (_stickyTheme)
+        {
+            var cream = Color.FromArgb(255, 255, 249, 183);
+            bar.ButtonBackgroundColor = Color.FromArgb(0, 0, 0, 0);
+            bar.ButtonInactiveBackgroundColor = Color.FromArgb(0, 0, 0, 0);
+            bar.ButtonForegroundColor = cream;
+            bar.ButtonInactiveForegroundColor = Color.FromArgb(255, 214, 184, 150);
+            bar.ButtonHoverBackgroundColor = Color.FromArgb(255, 166, 95, 31);
+            bar.ButtonHoverForegroundColor = Color.FromArgb(255, 255, 255, 255);
+            bar.ButtonPressedBackgroundColor = Color.FromArgb(255, 107, 57, 14);
+            bar.ButtonPressedForegroundColor = Color.FromArgb(255, 255, 255, 255);
+        }
+        else
+        {
+            bar.ButtonBackgroundColor = null;
+            bar.ButtonInactiveBackgroundColor = null;
+            bar.ButtonForegroundColor = null;
+            bar.ButtonInactiveForegroundColor = null;
+            bar.ButtonHoverBackgroundColor = null;
+            bar.ButtonHoverForegroundColor = null;
+            bar.ButtonPressedBackgroundColor = null;
+            bar.ButtonPressedForegroundColor = null;
+        }
     }
 
     private async void OnRefreshRates(object sender, RoutedEventArgs e) => await RefreshRatesAsync();
