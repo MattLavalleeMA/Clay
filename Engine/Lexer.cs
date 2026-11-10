@@ -39,7 +39,8 @@ public static class Lexer
             }
             else if (IsIdentStart(c))
             {
-                list.Add(ReadIdent(s, ref i));
+                // After a divide, m/m/s reads as (m/m)/s so the unit isn't joined to the divisor
+                list.Add(ReadIdent(s, ref i, list.Count > 0 && list[^1] is { Kind: Tk.Op, Text: "/" }));
             }
             else if (CurrencySymbols.IndexOf(c) >= 0)
             {
@@ -149,28 +150,58 @@ public static class Lexer
         return new Token(Tk.Num, s[start..i], value);
     }
 
-    private static Token ReadIdent(string s, ref int i)
+    private static Token ReadIdent(string s, ref int i, bool afterDivide)
     {
         int start = i++;
         while (i < s.Length && IsIdentPart(s[i])) i++;
         var word = s[start..i];
+        if (afterDivide) return new Token(Tk.Ident, word);
 
         // Unit expressions such as km/h, m/s², kg·m/s², and m/s^2 (a power binds to the unit before it)
         int end = i;
-        var expr = word + ReadPower(s, ref end);
+        var expr = WithPower(word, ReadPower(s, ref end));
         while (end + 1 < s.Length && (s[end] == '/' || s[end] == '·') && IsIdentStart(s[end + 1]))
         {
             int j = end + 1;
             while (j < s.Length && IsIdentPart(s[j])) j++;
-            var compound = expr + s[end] + s[(end + 1)..j];
-            compound += ReadPower(s, ref j);
-            if (UnitTable.Parse(compound) == null) break;
-            word = expr = compound;
-            i = end = j;
+            var factor = WithPower(s[(end + 1)..j], ReadPower(s, ref j));
+            if (!UnitTable.IsFactor(factor)) break;
+
+            expr += s[end] + factor;
+            end = j;
+
+            // Keep scanning past a prefix that cancels (m/m/s) and settle on the last valid unit
+            if (UnitTable.Parse(expr) != null)
+            {
+                word = expr;
+                i = end;
+            }
         }
 
         return new Token(Tk.Ident, word);
     }
+
+    /// <summary>Appends a caret power as superscripts, multiplying any exponent the factor already has (s²^2 is s⁴).</summary>
+    private static string WithPower(string factor, string power)
+    {
+        if (power.Length == 0) return factor;
+
+        int split = factor.Length;
+        while (split > 0 && Superscripts.IndexOf(factor[split - 1]) >= 0) split--;
+        if (split == 0 || split == factor.Length) return factor + power;
+
+        if (!int.TryParse(FromSuperscripts(factor[split..]), out int a) ||
+            !int.TryParse(FromSuperscripts(power), out int b))
+            return factor + power;
+
+        return factor[..split] + ToSuperscripts(a * b);
+    }
+
+    private static string FromSuperscripts(string s) =>
+        string.Concat(s.Select(c => c == '⁻' ? '-' : (char)('0' + Superscripts.IndexOf(c))));
+
+    private static string ToSuperscripts(int n) =>
+        string.Concat(n.ToString(CultureInfo.InvariantCulture).Select(c => c == '-' ? '⁻' : Superscripts[c - '0']));
 
     /// <summary>Reads "^2" or "^-1" at i as superscripts; returns "" and leaves i alone otherwise.</summary>
     private static string ReadPower(string s, ref int i)

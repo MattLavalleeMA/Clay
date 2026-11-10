@@ -164,9 +164,18 @@ public static class UnitTable
             }
         }
 
-        return Compose(terms.SelectMany(t => t.Unit.Leaves.Select(l => l with { Power = l.Power * t.Power })),
-            out double scale) is { } result && scale == 1 ? result : null;
+        var leaves = Merge(terms.SelectMany(t => t.Unit.Leaves.Select(l => l with { Power = l.Power * t.Power })));
+
+        // A dimensionless ratio such as m/in, or one that partly cancels such as m/in/s, is left to the
+        // arithmetic so the conversion factor is applied
+        if (leaves.Any(a => a.Power > 0 && leaves.Any(b => b.Power < 0 && a.Unit.Dimension == b.Unit.Dimension)))
+            return null;
+
+        return Compose(leaves, out double scale) is { } result && scale == 1 ? result : null;
     }
+
+    /// <summary>Whether the text is a single unit factor such as m, s², or in.</summary>
+    public static bool IsFactor(string text) => TryFactor(text, out _, out _);
 
     // "in" isn't in the general lookup because it's also the conversion keyword
     private static Unit? FactorUnit(string text) =>

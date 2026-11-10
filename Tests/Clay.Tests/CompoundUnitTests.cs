@@ -106,7 +106,12 @@ public class CompoundUnitTests
     [InlineData("1 m² in in^2", "1,550.0031 in²")]
     [InlineData("1 m/s in in per s", "39.370079 in/s")]
     [InlineData("5 m / in", "196.850394")]
-    public void HandlesZeroPowersInchesAndLeafRoots(string expression, string expected) =>
+    [InlineData("5 m/in", "196.850394")]
+    [InlineData("1 m/cm as a %", "10,000%")]
+    [InlineData("5 m/m/s", "5 s⁻¹")]
+    [InlineData("1 m/s²^2", "1 m/s⁴")]
+    [InlineData("1 m²^2/s", "1 m⁴/s")]
+    [InlineData("1 m/in/s", "39.370079 s⁻¹")]    public void HandlesZeroPowersInchesAndLeafRoots(string expression, string expected) =>
         AssertResult(Eval(expression), expected);
 
     [Theory]
