@@ -159,12 +159,12 @@ public static class Lexer
 
         // Unit expressions such as km/h, m/s², kg·m/s², and m/s^2 (a power binds to the unit before it)
         int end = i;
-        var expr = WithPower(word, ReadPower(s, ref end));
+        var expr = WithPowers(word, s, ref end);
         while (end + 1 < s.Length && (s[end] == '/' || s[end] == '·') && IsIdentStart(s[end + 1]))
         {
             int j = end + 1;
             while (j < s.Length && IsIdentPart(s[j])) j++;
-            var factor = WithPower(s[(end + 1)..j], ReadPower(s, ref j));
+            var factor = WithPowers(s[(end + 1)..j], s, ref j);
             if (!UnitTable.IsFactor(factor)) break;
 
             expr += s[end] + factor;
@@ -179,6 +179,13 @@ public static class Lexer
         }
 
         return new Token(Tk.Ident, word);
+    }
+
+    /// <summary>Applies every caret power at i to the factor, so s^2^2 and s²^2 are both s⁴.</summary>
+    private static string WithPowers(string factor, string s, ref int i)
+    {
+        while (ReadPower(s, ref i) is { Length: > 0 } power) factor = WithPower(factor, power);
+        return factor;
     }
 
     /// <summary>Appends a caret power as superscripts, multiplying any exponent the factor already has (s²^2 is s⁴).</summary>

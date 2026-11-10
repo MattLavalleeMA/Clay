@@ -111,6 +111,8 @@ public class CompoundUnitTests
     [InlineData("5 m/m/s", "5 s⁻¹")]
     [InlineData("1 m/s²^2", "1 m/s⁴")]
     [InlineData("1 m²^2/s", "1 m⁴/s")]
+    [InlineData("1 m/s^2^2", "1 m/s⁴")]
+    [InlineData("1 m^2^2/s", "1 m⁴/s")]
     [InlineData("1 m/in/s", "39.370079 s⁻¹")]    public void HandlesZeroPowersInchesAndLeafRoots(string expression, string expected) =>
         AssertResult(Eval(expression), expected);
 
